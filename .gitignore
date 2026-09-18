@@ -31,3 +31,7 @@ venv/
 
 # IDE
 .vscode/
+backend/chroma_db/
+*.sqlite3
+.env
+__pycache__/
