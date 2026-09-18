@@ -54,7 +54,7 @@ class User(Base):
     hashed_password = Column(String(255), nullable=False)
     name = Column(String(100), nullable=False)
     phone = Column(String(50), nullable=True)
-    role = Column(String(20), default="customer", nullable=False) # admin, manager, staff, customer
+    role = Column(String(20), default="customer", nullable=False) # admin, customer
     branch_id = Column(String(50), ForeignKey("branches.id"), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 

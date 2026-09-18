@@ -1,4 +1,4 @@
-﻿import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Routes, Route, useLocation, Navigate } from 'react-router-dom';
 import { MessageSquare, Scissors } from 'lucide-react';
 import { AuthProvider, useAuth } from './context/AuthContext';
@@ -25,13 +25,6 @@ import Login from './pages/Login';
 // Customer Role Page
 import CustomerDashboard from './pages/customer/CustomerDashboard';
 
-// Staff Role Page
-import StaffDashboard from './pages/staff/StaffDashboard';
-
-// Manager Role Pages
-import ManagerLayout from './pages/manager/ManagerLayout';
-import ManagerBranchManagement from './pages/manager/ManagerBranchManagement';
-
 // Admin / Shared CRM Pages
 import CrmLayout from './pages/crm/CrmLayout';
 import CrmDashboard from './pages/crm/CrmDashboard';
@@ -52,11 +45,10 @@ function ScrollToTop() {
   return null;
 }
 
-// Redirects legacy /crm visits to the role-appropriate dashboard
+// Redirects legacy /crm visits to the role-appropriate dashboard (Admin -> /admin/dashboard, Customer -> /customer)
 function CrmRoleRedirect() {
-  const { user } = useAuth();
-  if (user?.role === 'manager') return <Navigate to="/manager/dashboard" replace />;
-  if (user?.role === 'staff') return <Navigate to="/staff/dashboard" replace />;
+  const { user, isAuthenticated } = useAuth();
+  if (!isAuthenticated) return <Navigate to="/login" replace />;
   if (user?.role === 'admin') return <Navigate to="/admin/dashboard" replace />;
   return <Navigate to="/customer" replace />;
 }
@@ -66,8 +58,6 @@ function MainApp() {
   const [isChatOpen, setIsChatOpen] = useState(false);
   const isDedicatedPortal = (
     pathname.startsWith('/admin') ||
-    pathname.startsWith('/manager') ||
-    pathname.startsWith('/staff') ||
     pathname === '/login'
   );
 
@@ -122,49 +112,12 @@ function MainApp() {
             }
           />
 
-          {/* ================= STAFF PORTAL ================= */}
-          <Route
-            path="/staff"
-            element={
-              <ProtectedRoute allowedRoles={['staff']}>
-                <Navigate to="/staff/dashboard" replace />
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/staff/dashboard"
-            element={
-              <ProtectedRoute allowedRoles={['staff']}>
-                <StaffDashboard />
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/staff/*"
-            element={
-              <ProtectedRoute allowedRoles={['staff']}>
-                <StaffDashboard />
-              </ProtectedRoute>
-            }
-          />
-
-          {/* ================= MANAGER PORTAL ================= */}
-          <Route
-            path="/manager"
-            element={
-              <ProtectedRoute allowedRoles={['manager']}>
-                <ManagerLayout />
-              </ProtectedRoute>
-            }
-          >
-            <Route index element={<Navigate to="/manager/dashboard" replace />} />
-            <Route path="dashboard" element={<CrmDashboard />} />
-            <Route path="appointments" element={<CrmAppointments />} />
-            <Route path="staff" element={<CrmStaff />} />
-            <Route path="customers" element={<CrmCustomers />} />
-            <Route path="services" element={<CrmServicesBranches />} />
-            <Route path="branches" element={<ManagerBranchManagement />} />
-          </Route>
+          {/* ================= DEPRECATED MANAGER & STAFF ROUTES (FAIL CLOSED) ================= */}
+          {/* Direct visits immediately redirect to /login and never render or leak data */}
+          <Route path="/manager" element={<Navigate to="/login" replace />} />
+          <Route path="/manager/*" element={<Navigate to="/login" replace />} />
+          <Route path="/staff" element={<Navigate to="/login" replace />} />
+          <Route path="/staff/*" element={<Navigate to="/login" replace />} />
 
           {/* ================= ADMIN / CRM PORTAL ================= */}
           <Route
@@ -186,22 +139,8 @@ function MainApp() {
           </Route>
 
           {/* Legacy /crm Route Redirect */}
-          <Route
-            path="/crm"
-            element={
-              <ProtectedRoute allowedRoles={['admin', 'manager', 'staff']}>
-                <CrmRoleRedirect />
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/crm/*"
-            element={
-              <ProtectedRoute allowedRoles={['admin', 'manager', 'staff']}>
-                <CrmRoleRedirect />
-              </ProtectedRoute>
-            }
-          />
+          <Route path="/crm" element={<CrmRoleRedirect />} />
+          <Route path="/crm/*" element={<CrmRoleRedirect />} />
 
           {/* 404 Fallback */}
           <Route path="*" element={<NotFound />} />

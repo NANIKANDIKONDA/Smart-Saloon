@@ -20,31 +20,11 @@ export default function Navbar({ onOpenChat }) {
   ];
 
   const getDashboardRoute = (role) => {
-    switch (role) {
-      case 'admin':
-        return '/admin/dashboard';
-      case 'manager':
-        return '/manager/dashboard';
-      case 'staff':
-        return '/staff/dashboard';
-      case 'customer':
-      default:
-        return '/customer';
-    }
+    return role === 'admin' ? '/admin/dashboard' : '/customer';
   };
 
   const getRoleLabel = (role) => {
-    switch (role) {
-      case 'admin':
-        return 'Admin Console';
-      case 'manager':
-        return 'Manager Console';
-      case 'staff':
-        return 'Staff Portal';
-      case 'customer':
-      default:
-        return 'My Patron Portal';
-    }
+    return role === 'admin' ? 'Admin Console' : 'My Patron Portal';
   };
 
   return (

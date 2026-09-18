@@ -54,14 +54,18 @@ from .auth import (
     create_access_token,
     get_current_user,
     get_optional_user,
-    require_roles
+    require_roles,
+    require_admin
 )
 from .payments import (
     create_razorpay_order,
     verify_razorpay_signature
 )
-from .ollama_service import generate_chat_response, check_ollama_health
-from .notifications import send_booking_confirmation_sms, send_booking_confirmation_whatsapp
+from .ollama_service import generate_chat_response, check_ollama_health, resolve_verified_salon_query
+from .notifications import send_booking_confirmation_sms, send_booking_confirmation_whatsapp, generate_mobile_dispatch_urls
+from .intent_router import classify_intent, OFF_TOPIC_REFUSAL, GROUNDING_REFUSAL
+from .rag_service import handle_rag_pipeline
+from .crm_query_service import execute_authorized_crm_query
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -94,14 +98,13 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-@app.get("/", tags=["Root"])
-def read_root():
+@app.get("/", tags=["General"])
+def root():
     return {
-        "message": "Welcome to SmartSalon Luxury & CRM API",
-        "salon": SALON_INFO["name"],
+        "status": "online",
+        "service": "SmartSalon Luxury Grooming API",
         "version": "2.0.0",
-        "docs": "/docs",
-        "health": "/api/health"
+        "docs": "/docs"
     }
 
 @app.get("/health", response_model=HealthResponse, tags=["Health"])
@@ -114,6 +117,7 @@ async def health_check(db: Session = Depends(get_db)):
         db_status = f"error: {e}"
 
     ollama_info = await check_ollama_health()
+
     return {
         "status": "healthy" if db_status == "connected" else "degraded",
         "database": db_status,
@@ -124,6 +128,12 @@ async def health_check(db: Session = Depends(get_db)):
 
 @app.post("/api/auth/register", response_model=TokenResponse, tags=["Auth"])
 def register(req: UserRegisterRequest, db: Session = Depends(get_db)):
+    if req.role in ["manager", "staff"]:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Manager and Staff roles are no longer supported. Only Admin and Customer accounts are allowed."
+        )
+
     existing = db.query(User).filter(User.email == req.email.lower().strip()).first()
     if existing:
         raise HTTPException(
@@ -132,13 +142,15 @@ def register(req: UserRegisterRequest, db: Session = Depends(get_db)):
         )
 
     user_id = f"usr-{uuid.uuid4().hex[:10]}"
+    assigned_role = "admin" if req.role == "admin" else "customer"
+
     new_user = User(
         id=user_id,
         email=req.email.lower().strip(),
         hashed_password=hash_password(req.password),
         name=req.name.strip(),
         phone=req.phone.strip() if req.phone else None,
-        role=req.role if req.role in ["customer", "staff", "manager", "admin"] else "customer",
+        role=assigned_role,
         created_at=datetime.now(timezone.utc)
     )
     db.add(new_user)
@@ -159,14 +171,6 @@ def register(req: UserRegisterRequest, db: Session = Depends(get_db)):
         }
     }
 
-def require_manager(current_user: User = Depends(get_current_user)) -> User:
-    if current_user.role != "manager":
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only managers can manage branches."
-        )
-    return current_user
-
 @app.post("/login", response_model=TokenResponse, tags=["Auth"])
 @app.post("/api/auth/login", response_model=TokenResponse, tags=["Auth"])
 def login(req: UserLoginRequest, db: Session = Depends(get_db)):
@@ -175,6 +179,13 @@ def login(req: UserLoginRequest, db: Session = Depends(get_db)):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid email or password"
+        )
+
+    # Only Admin and Customer roles exist end-to-end
+    if user.role not in ["admin", "customer"]:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Account role is deprecated or unsupported. Only Admin and Customer logins are permitted."
         )
 
     token = create_access_token({"sub": user.id, "email": user.email, "role": user.role})
@@ -214,9 +225,9 @@ def get_active_branches(db: Session = Depends(get_db)):
 @app.get("/api/branches", response_model=List[BranchResponse], tags=["Branches"])
 def get_branches(
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_manager)
+    current_user: User = Depends(require_admin)
 ):
-    """Manager-only endpoint returning all branches (active & inactive)."""
+    """Admin-only endpoint returning all branches (active & inactive)."""
     branches = db.query(Branch).order_by(Branch.name.asc()).all()
     return branches
 
@@ -224,9 +235,9 @@ def get_branches(
 def create_branch(
     req: BranchCreateUpdateRequest,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_manager)
+    current_user: User = Depends(require_admin)
 ):
-    """Manager-only endpoint to add a new salon branch."""
+    """Admin-only endpoint to add a new salon branch."""
     if not req.name.strip() or not req.address.strip() or not req.city.strip() or not req.phone.strip():
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -262,9 +273,9 @@ def update_branch(
     branch_id: str,
     req: BranchCreateUpdateRequest,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_manager)
+    current_user: User = Depends(require_admin)
 ):
-    """Manager-only endpoint to update branch details."""
+    """Admin-only endpoint to update branch details."""
     branch = db.query(Branch).filter(Branch.id == branch_id).first()
     if not branch:
         raise HTTPException(status_code=404, detail=f"Branch '{branch_id}' not found")
@@ -301,10 +312,10 @@ def update_branch(
 def delete_branch(
     branch_id: str,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_manager)
+    current_user: User = Depends(require_admin)
 ):
     """
-    Manager-only endpoint to remove a branch.
+    Admin-only endpoint to remove a branch.
     Performs soft delete (status='inactive') if the branch has dependent bookings or staff,
     to preserve historical data.
     """
@@ -596,14 +607,18 @@ def create_booking(
     db.refresh(new_booking)
 
     # Dispatch cellular SMS and WhatsApp confirmation
+    sms_res = {}
     try:
-        send_booking_confirmation_sms(
+        sms_res = send_booking_confirmation_sms(
             phone=new_booking.customer_phone,
             customer_name=new_booking.customer_name,
             booking_id=new_booking.id,
             date=new_booking.date,
             time_slot=new_booking.time_slot,
-            branch_name=branch_name
+            branch_name=branch_name,
+            service_name=new_booking.service_name,
+            price=new_booking.service_price,
+            duration=total_duration or 45
         )
         send_booking_confirmation_whatsapp(
             phone=new_booking.customer_phone,
@@ -611,10 +626,13 @@ def create_booking(
             booking_id=new_booking.id,
             date=new_booking.date,
             time_slot=new_booking.time_slot,
-            branch_name=branch_name
+            branch_name=branch_name,
+            service_name=new_booking.service_name,
+            price=new_booking.service_price,
+            duration=total_duration or 45
         )
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning(f"Notification dispatch error: {e}")
 
     return {
         "bookingId": new_booking.id,
@@ -645,7 +663,12 @@ def create_booking(
         "location": location_desc,
         "status": new_booking.status,
         "paymentStatus": new_booking.payment_status,
-        "bookingType": new_booking.booking_type
+        "bookingType": new_booking.booking_type,
+        "notification_message": sms_res.get("message", ""),
+        "whatsapp_url": sms_res.get("whatsapp_url", ""),
+        "sms_url": sms_res.get("sms_url", ""),
+        "live_dispatched": sms_res.get("live_dispatched", False),
+        "sms_provider": sms_res.get("provider", "dev_console")
     }
 
 @app.get("/api/bookings", tags=["Bookings"])
@@ -785,18 +808,14 @@ def verify_payment(req: PaymentVerifyRequest, db: Session = Depends(get_db)):
 def get_crm_dashboard(
     branch_id: Optional[str] = None,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_roles(["admin", "manager", "staff"]))
+    current_user: User = Depends(require_roles(["admin"]))
 ):
     today_str = datetime.now().strftime("%Y-%m-%d")
     
-    # Filter by branch if requested, or default for manager/staff
+    # Filter by branch if requested
     base_booking_q = db.query(Booking)
     if branch_id and branch_id != "all":
         base_booking_q = base_booking_q.filter(Booking.branch_id == branch_id)
-    elif branch_id == "all":
-        pass
-    elif current_user.role in ["manager", "staff"] and current_user.branch_id:
-        base_booking_q = base_booking_q.filter(Booking.branch_id == current_user.branch_id)
 
     total_appointments = base_booking_q.count()
     today_appointments = base_booking_q.filter(Booking.date == today_str).count()
@@ -861,7 +880,7 @@ def get_crm_customers(
     search: Optional[str] = None,
     tag: Optional[str] = None,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_roles(["admin", "manager", "staff"]))
+    current_user: User = Depends(require_roles(["admin"]))
 ):
     # Group bookings by customer_email
     bookings = db.query(Booking).all()
@@ -915,7 +934,7 @@ def get_crm_customers(
 def get_customer_360(
     customer_email: str,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_roles(["admin", "manager", "staff"]))
+    current_user: User = Depends(require_roles(["admin"]))
 ):
     email = customer_email.lower().strip()
     bookings = db.query(Booking).filter(
@@ -971,7 +990,7 @@ def add_customer_note(
     customer_email: str,
     req: CustomerNoteCreateRequest,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_roles(["admin", "manager", "staff"]))
+    current_user: User = Depends(require_roles(["admin"]))
 ):
     note = CustomerNote(
         customer_email=customer_email.lower().strip(),
@@ -988,7 +1007,7 @@ def add_customer_tag(
     customer_email: str,
     req: CustomerTagCreateRequest,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_roles(["admin", "manager", "staff"]))
+    current_user: User = Depends(require_roles(["admin"]))
 ):
     existing = db.query(CustomerTag).filter(
         func.lower(CustomerTag.customer_email) == customer_email.lower().strip(),
@@ -1005,7 +1024,7 @@ def remove_customer_tag(
     customer_email: str,
     tag_name: str,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_roles(["admin", "manager"]))
+    current_user: User = Depends(require_roles(["admin"]))
 ):
     tag = db.query(CustomerTag).filter(
         func.lower(CustomerTag.customer_email) == customer_email.lower().strip(),
@@ -1023,17 +1042,13 @@ def get_crm_appointments(
     status_filter: Optional[str] = None,
     search: Optional[str] = None,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_roles(["admin", "manager", "staff"]))
+    current_user: User = Depends(require_roles(["admin"]))
 ):
     query = db.query(Booking).order_by(Booking.date.desc(), Booking.time_slot.asc())
 
-    # Branch filtering: explicit filter takes priority over user default
+    # Branch filtering
     if branch_id and branch_id != "all":
         query = query.filter(Booking.branch_id == branch_id)
-    elif branch_id == "all":
-        pass
-    elif current_user.role in ["manager", "staff"] and current_user.branch_id:
-        query = query.filter(Booking.branch_id == current_user.branch_id)
 
     if date:
         query = query.filter(Booking.date == date)
@@ -1086,7 +1101,7 @@ def update_appointment_status(
     booking_id: str,
     req: AppointmentStatusUpdateRequest,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_roles(["admin", "manager", "staff"]))
+    current_user: User = Depends(require_roles(["admin"]))
 ):
     booking = db.query(Booking).filter(Booking.id == booking_id).first()
     if not booking:
@@ -1099,14 +1114,17 @@ def update_appointment_status(
     return {"message": "Status updated successfully", "status": booking.status, "paymentStatus": booking.payment_status}
 
 @app.get("/api/crm/staff", response_model=List[StaffResponse], tags=["CRM"])
-def get_crm_staff(db: Session = Depends(get_db)):
+def get_crm_staff(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles(["admin"]))
+):
     return db.query(Staff).all()
 
 @app.post("/api/crm/staff", response_model=StaffResponse, tags=["CRM"])
 def create_crm_staff(
     req: StaffCreateUpdateRequest,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_roles(["admin", "manager"]))
+    current_user: User = Depends(require_roles(["admin"]))
 ):
     new_staff = Staff(
         id=f"st-{uuid.uuid4().hex[:6]}",
@@ -1127,7 +1145,7 @@ def create_crm_staff(
 @app.get("/api/crm/payments", tags=["CRM"])
 def get_crm_payments(
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_roles(["admin", "manager"]))
+    current_user: User = Depends(require_roles(["admin"]))
 ):
     payments = db.query(Payment).order_by(Payment.created_at.desc()).all()
     bookings_map = {b.id: b for b in db.query(Booking).all()}
@@ -1152,7 +1170,7 @@ def get_crm_payments(
 def get_crm_reports(
     period: Optional[str] = "month",
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_roles(["admin", "manager"]))
+    current_user: User = Depends(require_roles(["admin"]))
 ):
     bookings = db.query(Booking).filter(Booking.status != "Cancelled").all()
     total_rev = sum(b.advance_paid or 0 for b in bookings)
@@ -1177,9 +1195,68 @@ def get_crm_reports(
         "returningCustomers": repeat_customers
     }
 
+# ==================== DEPRECATED MANAGER & STAFF ROUTES ====================
+
+@app.api_route("/api/manager/{path:path}", methods=["GET", "POST", "PUT", "PATCH", "DELETE"], tags=["Deprecated"])
+@app.api_route("/api/staff/{path:path}", methods=["GET", "POST", "PUT", "PATCH", "DELETE"], tags=["Deprecated"])
+def deprecated_manager_staff_routes(path: str):
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail="Manager and Staff APIs are deprecated and forbidden."
+    )
+
 # ==================== CHATBOT ====================
 
 @app.post("/api/chat", response_model=ChatResponse, tags=["Chat"])
-async def chat_with_assistant(chat_in: ChatRequest):
-    answer = await generate_chat_response(chat_in.message)
-    return {"answer": answer}
+async def chat_with_assistant(
+    chat_in: ChatRequest,
+    db: Session = Depends(get_db),
+    current_user: Optional[User] = Depends(get_optional_user)
+):
+    """
+    Intelligent chatbot endpoint with:
+    - Intent Router (SALON_KNOWLEDGE, CRM_QUERY, OFF_TOPIC)
+    - RAG Pipeline over ChromaDB + Ollama llama3.2:3b
+    - Authorized SQLite CRM Query Path (customer bookings, admin stats)
+    - Grounding Rule: 'I don't know because this information is not available in the current SmartSalon knowledge base.'
+    - Off-Topic Rule: 'I'm here to help with SmartSalon-related questions.'
+    Preserves exact {answer: str} contract for frontend.
+    """
+    raw_query = chat_in.message.strip() if chat_in.message else ""
+    if not raw_query:
+        return {"answer": "Please enter a question regarding SmartSalon services, branches, or bookings."}
+
+    # 1. Classify query intent
+    classification = classify_intent(raw_query)
+    intent = classification["intent"]
+    subtype = classification.get("subtype", "")
+
+    # 2. Off-Topic Fixed Refusal
+    if intent == "OFF_TOPIC":
+        return {"answer": OFF_TOPIC_REFUSAL}
+
+    # 3. Controlled, Role-Checked CRM Query Path
+    if intent == "CRM_QUERY":
+        ans = execute_authorized_crm_query(raw_query, subtype, current_user, db)
+        return {"answer": ans}
+
+    # 4. Salon Knowledge Path via RAG
+    if intent == "SALON_KNOWLEDGE":
+        if subtype == "greeting":
+            return {"answer": "Greetings! I am your SmartSalon AI Stylist. How may I assist your grooming ritual or branch booking today?"}
+
+        # ChromaDB + Ollama Grounded RAG Pipeline over Master Cutts Knowledge Document
+        rag_ans = await handle_rag_pipeline(raw_query)
+        if rag_ans != GROUNDING_REFUSAL:
+            return {"answer": rag_ans}
+
+        # Check core operational salon facts (opening hours, location, contact, can book)
+        fast_ans = resolve_verified_salon_query(raw_query)
+        if fast_ans:
+            return {"answer": fast_ans}
+
+        return {"answer": GROUNDING_REFUSAL}
+
+    return {"answer": OFF_TOPIC_REFUSAL}
+
+

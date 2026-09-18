@@ -16,20 +16,10 @@ export default function AuthModal({ isOpen, onClose }) {
   const [loading, setLoading] = useState(false);
 
   const redirectByRole = (role) => {
-    switch (role) {
-      case 'admin':
-        navigate('/admin/dashboard');
-        break;
-      case 'manager':
-        navigate('/manager/dashboard');
-        break;
-      case 'staff':
-        navigate('/staff/dashboard');
-        break;
-      case 'customer':
-      default:
-        navigate('/customer');
-        break;
+    if (role === 'admin') {
+      navigate('/admin/dashboard');
+    } else {
+      navigate('/customer');
     }
   };
 
@@ -203,20 +193,6 @@ export default function AuthModal({ isOpen, onClose }) {
               className="py-1.5 px-2 rounded-lg bg-[#201e2c] hover:bg-[#282638] text-stone-300 border border-white/5 truncate"
             >
               Admin (Full CRM)
-            </button>
-            <button
-              type="button"
-              onClick={() => handleQuickFill('manager@smartsalon.in', 'Manager@123')}
-              className="py-1.5 px-2 rounded-lg bg-[#201e2c] hover:bg-[#282638] text-stone-300 border border-white/5 truncate"
-            >
-              Manager
-            </button>
-            <button
-              type="button"
-              onClick={() => handleQuickFill('staff@smartsalon.in', 'Staff@123')}
-              className="py-1.5 px-2 rounded-lg bg-[#201e2c] hover:bg-[#282638] text-stone-300 border border-white/5 truncate"
-            >
-              Staff
             </button>
             <button
               type="button"

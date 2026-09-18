@@ -95,9 +95,7 @@ export function AuthProvider({ children }) {
 
   const isAuthenticated = Boolean(user && token);
   const isAdmin = user?.role === 'admin';
-  const isManager = user?.role === 'manager';
-  const isStaff = user?.role === 'staff';
-  const isStaffOrManager = ['admin', 'manager', 'staff'].includes(user?.role);
+  const isCustomer = user?.role === 'customer';
 
   return (
     <AuthContext.Provider
@@ -107,9 +105,11 @@ export function AuthProvider({ children }) {
         loading,
         isAuthenticated,
         isAdmin,
-        isManager,
-        isStaff,
-        isStaffOrManager,
+        isCustomer,
+        // Legacy compatibility: map to isAdmin so any un-migrated guard fails closed for non-admins
+        isStaffOrManager: isAdmin,
+        isManager: false,
+        isStaff: false,
         login,
         register,
         logout

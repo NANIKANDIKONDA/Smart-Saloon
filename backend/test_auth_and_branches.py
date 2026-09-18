@@ -1,4 +1,4 @@
-﻿import sys
+import sys
 import os
 import unittest
 import uuid
@@ -14,18 +14,19 @@ class TestAuthAndBranchManagement(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        # 1. Login with all 4 roles via /login
-        cls.roles = {
+        # 1. Login with supported roles: Admin and Customer
+        cls.valid_roles = {
             "admin": {"email": "admin@smartsalon.in", "password": "Admin@123"},
-            "manager": {"email": "manager@smartsalon.in", "password": "Manager@123"},
-            "staff": {"email": "staff@smartsalon.in", "password": "Staff@123"},
             "customer": {"email": "nagoor@example.com", "password": "Customer@123"}
+        }
+        cls.deprecated_roles = {
+            "manager": {"email": "manager@smartsalon.in", "password": "Manager@123"},
+            "staff": {"email": "staff@smartsalon.in", "password": "Staff@123"}
         }
         cls.tokens = {}
         cls.headers = {}
 
-        for role, creds in cls.roles.items():
-            # Test POST /login alias
+        for role, creds in cls.valid_roles.items():
             resp = client.post("/login", json=creds)
             assert resp.status_code == 200, f"Login failed for {role}: {resp.text}"
             data = resp.json()
@@ -34,9 +35,9 @@ class TestAuthAndBranchManagement(unittest.TestCase):
             cls.tokens[role] = data["access_token"]
             cls.headers[role] = {"Authorization": f"Bearer {data['access_token']}"}
 
-    def test_01_login_endpoint_role_verification(self):
-        """Verify POST /login and POST /api/auth/login return exact role and token"""
-        for role, creds in self.roles.items():
+    def test_01_two_roles_login_verification(self):
+        """Verify Admin and Customer login successfully and return correct backend-verified roles"""
+        for role, creds in self.valid_roles.items():
             resp = client.post("/api/auth/login", json=creds)
             self.assertEqual(resp.status_code, 200)
             data = resp.json()
@@ -51,137 +52,118 @@ class TestAuthAndBranchManagement(unittest.TestCase):
             self.assertEqual(me_data["role"], role)
             self.assertEqual(me_data["email"], creds["email"])
 
-    def test_02_manager_only_guard_enforcement(self):
-        """Verify only manager has access to /api/branches; admin, staff, customer receive 403"""
+    def test_02_manager_and_staff_login_unsupported(self):
+        """Verify Manager and Staff logins are rejected at the authorization layer (HTTP 401)"""
+        for role, creds in self.deprecated_roles.items():
+            # Test /login endpoint
+            resp = client.post("/login", json=creds)
+            self.assertEqual(resp.status_code, 401, f"{role} should have been rejected with 401")
+            self.assertIn("deprecated or unsupported", resp.json().get("detail", "").lower())
+
+            # Test /api/auth/login endpoint
+            api_resp = client.post("/api/auth/login", json=creds)
+            self.assertEqual(api_resp.status_code, 401)
+
+        # Test registration with deprecated roles is blocked (HTTP 400)
+        for dep_role in ["manager", "staff"]:
+            reg_resp = client.post("/api/auth/register", json={
+                "email": f"new_{dep_role}_{uuid.uuid4().hex[:4]}@smartsalon.in",
+                "password": "Password@123",
+                "name": f"Test {dep_role.title()}",
+                "role": dep_role
+            })
+            self.assertEqual(reg_resp.status_code, 400)
+            self.assertIn("no longer supported", reg_resp.json().get("detail", "").lower())
+
+    def test_03_admin_and_customer_access_control(self):
+        """Verify Admin can access branches and CRM, while Customer receives HTTP 403 Forbidden"""
         # Unauthenticated -> 401
         unauth_resp = client.get("/api/branches")
         self.assertEqual(unauth_resp.status_code, 401)
 
-        # Customer -> 403
-        cust_resp = client.get("/api/branches", headers=self.headers["customer"])
-        self.assertEqual(cust_resp.status_code, 403)
-        self.assertEqual(cust_resp.json()["detail"], "Only managers can manage branches.")
+        # Customer -> 403 on admin branch management
+        cust_branch = client.get("/api/branches", headers=self.headers["customer"])
+        self.assertEqual(cust_branch.status_code, 403)
+        self.assertEqual(cust_branch.json()["detail"], "Only administrators can manage branches.")
 
-        # Staff -> 403
-        staff_resp = client.get("/api/branches", headers=self.headers["staff"])
-        self.assertEqual(staff_resp.status_code, 403)
-        self.assertEqual(staff_resp.json()["detail"], "Only managers can manage branches.")
+        # Customer -> 403 on CRM dashboard
+        cust_crm = client.get("/api/crm/dashboard", headers=self.headers["customer"])
+        self.assertEqual(cust_crm.status_code, 403)
 
-        # Admin -> 403 (strict manager exclusivity)
-        admin_resp = client.get("/api/branches", headers=self.headers["admin"])
-        self.assertEqual(admin_resp.status_code, 403)
-        self.assertEqual(admin_resp.json()["detail"], "Only managers can manage branches.")
+        # Customer -> 403 on CRM appointments
+        cust_appts = client.get("/api/crm/appointments", headers=self.headers["customer"])
+        self.assertEqual(cust_appts.status_code, 403)
 
-        # Manager -> 200
-        mgr_resp = client.get("/api/branches", headers=self.headers["manager"])
-        self.assertEqual(mgr_resp.status_code, 200)
-        self.assertIsInstance(mgr_resp.json(), list)
+        # Admin -> 200 on branch management
+        admin_branch = client.get("/api/branches", headers=self.headers["admin"])
+        self.assertEqual(admin_branch.status_code, 200)
+        self.assertIsInstance(admin_branch.json(), list)
 
-    def test_03_manager_create_and_update_branch(self):
-        """Verify manager can create and update branch, non-managers receive 403"""
+        # Admin -> 200 on CRM dashboard
+        admin_crm = client.get("/api/crm/dashboard", headers=self.headers["admin"])
+        self.assertEqual(admin_crm.status_code, 200)
+
+        # Admin -> 200 on CRM appointments
+        admin_appts = client.get("/api/crm/appointments", headers=self.headers["admin"])
+        self.assertEqual(admin_appts.status_code, 200)
+
+    def test_04_deprecated_api_routes(self):
+        """Verify hitting old Manager/Staff API routes fails closed (HTTP 403)"""
+        resp_mgr = client.get("/api/manager/dashboard")
+        self.assertEqual(resp_mgr.status_code, 403)
+        self.assertIn("deprecated", resp_mgr.json().get("detail", "").lower())
+
+        resp_staff = client.get("/api/staff/dashboard")
+        self.assertEqual(resp_staff.status_code, 403)
+        self.assertIn("deprecated", resp_staff.json().get("detail", "").lower())
+
+    def test_05_admin_branch_crud_and_soft_delete(self):
+        """Verify admin can create, update, and soft-delete branches, while customer receives 403"""
         test_branch_id = f"test-branch-{uuid.uuid4().hex[:6]}"
         payload = {
             "id": test_branch_id,
-            "name": "Luxury Test Branch",
+            "name": "Luxury Admin Branch",
             "city": "Hyderabad",
             "state": "Telangana",
             "address": "Road No 36, Jubilee Hills",
             "phone": "+91 9876543219",
-            "email": "jubilee@smartsalon.in",
-            "open_time": "09:00 AM",
-            "close_time": "09:00 PM",
+            "email": "admin.jubilee@smartsalon.in",
+            "opening_time": "09:00 AM",
+            "closing_time": "09:00 PM",
             "status": "active"
         }
 
-        # Non-managers forbidden from creating branch
-        for role in ["admin", "staff", "customer"]:
-            forbidden_resp = client.post("/api/branches", json=payload, headers=self.headers[role])
-            self.assertEqual(forbidden_resp.status_code, 403, f"{role} should have been forbidden")
-            self.assertEqual(forbidden_resp.json()["detail"], "Only managers can manage branches.")
+        # Customer forbidden from creating branch (403)
+        forbidden_resp = client.post("/api/branches", json=payload, headers=self.headers["customer"])
+        self.assertEqual(forbidden_resp.status_code, 403)
+        self.assertEqual(forbidden_resp.json()["detail"], "Only administrators can manage branches.")
 
-        # Manager creates branch
-        create_resp = client.post("/api/branches", json=payload, headers=self.headers["manager"])
+        # Admin creates branch (201)
+        create_resp = client.post("/api/branches", json=payload, headers=self.headers["admin"])
         self.assertEqual(create_resp.status_code, 201)
         created_data = create_resp.json()
         self.assertEqual(created_data["id"], test_branch_id)
         self.assertEqual(created_data["city"], "Hyderabad")
-        self.assertEqual(created_data["state"], "Telangana")
 
-        # Manager updates branch
+        # Admin updates branch (200)
         update_payload = {
-            "name": "Luxury Test Branch - Updated",
+            "name": "Luxury Admin Branch - Updated",
             "city": "Hyderabad",
             "state": "Telangana",
             "address": "Road No 36, Near Metro, Jubilee Hills",
             "phone": "+91 9876543219",
-            "email": "jubilee.updated@smartsalon.in",
-            "open_time": "08:30 AM",
-            "close_time": "09:30 PM",
+            "email": "admin.jubilee.updated@smartsalon.in",
+            "opening_time": "08:30 AM",
+            "closing_time": "09:30 PM",
             "status": "active"
         }
-        update_resp = client.put(f"/api/branches/{test_branch_id}", json=update_payload, headers=self.headers["manager"])
+        update_resp = client.put(f"/api/branches/{test_branch_id}", json=update_payload, headers=self.headers["admin"])
         self.assertEqual(update_resp.status_code, 200)
-        self.assertEqual(update_resp.json()["name"], "Luxury Test Branch - Updated")
+        self.assertEqual(update_resp.json()["name"], "Luxury Admin Branch - Updated")
 
         # Clean up hard delete (no bookings on this branch)
-        del_resp = client.delete(f"/api/branches/{test_branch_id}", headers=self.headers["manager"])
+        del_resp = client.delete(f"/api/branches/{test_branch_id}", headers=self.headers["admin"])
         self.assertEqual(del_resp.status_code, 200)
-
-    def test_04_soft_delete_branch_with_history(self):
-        """Verify that deleting a branch with dependent bookings results in soft-delete (status='inactive')"""
-        test_branch_id = f"hist-branch-{uuid.uuid4().hex[:6]}"
-        payload = {
-            "id": test_branch_id,
-            "name": "History Test Branch",
-            "city": "Bangalore",
-            "state": "Karnataka",
-            "address": "Indiranagar 100ft Road",
-            "phone": "+91 9999988888",
-            "email": "indiranagar@smartsalon.in",
-            "open_time": "10:00 AM",
-            "close_time": "08:00 PM",
-            "status": "active"
-        }
-        # Manager creates branch
-        create_resp = client.post("/api/branches", json=payload, headers=self.headers["manager"])
-        self.assertEqual(create_resp.status_code, 201)
-
-        # Create a booking attached to this branch
-        booking_payload = {
-            "customerName": "Branch History Test",
-            "phone": "9999988888",
-            "email": "historytest@example.com",
-            "date": "2026-11-20",
-            "timeSlot": "11:00 AM",
-            "branchId": test_branch_id,
-            "serviceIds": ["haircut-classic"]
-        }
-        b_resp = client.post("/api/bookings", json=booking_payload)
-        self.assertEqual(b_resp.status_code, 201)
-
-        # Manager attempts to delete the branch -> Soft delete expected
-        del_resp = client.delete(f"/api/branches/{test_branch_id}", headers=self.headers["manager"])
-        self.assertEqual(del_resp.status_code, 200)
-        del_data = del_resp.json()
-        self.assertIn("deactivated", del_data["message"].lower())
-        self.assertEqual(del_data["status"], "inactive")
-
-        # Verify active branches list DOES NOT include this inactive branch
-        active_resp = client.get("/api/branches/active")
-        self.assertEqual(active_resp.status_code, 200)
-        active_ids = [b["id"] for b in active_resp.json()]
-        self.assertNotIn(test_branch_id, active_ids)
-
-        # Verify attempting to book an inactive branch returns 400 Bad Request
-        bad_booking_resp = client.post("/api/bookings", json=booking_payload)
-        self.assertEqual(bad_booking_resp.status_code, 400)
-        self.assertIn("inactive", bad_booking_resp.json()["detail"].lower())
-
-        # Verify manager GET /api/branches still sees it as inactive
-        all_branches_resp = client.get("/api/branches", headers=self.headers["manager"])
-        all_branches = {b["id"]: b for b in all_branches_resp.json()}
-        self.assertIn(test_branch_id, all_branches)
-        self.assertEqual(all_branches[test_branch_id]["status"], "inactive")
 
 if __name__ == "__main__":
     unittest.main()

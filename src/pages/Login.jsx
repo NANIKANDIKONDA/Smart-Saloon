@@ -1,4 +1,4 @@
-﻿import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNavigate, useLocation, Link } from 'react-router-dom';
 import { Scissors, User, Lock, Mail, ShieldCheck, ArrowRight } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
@@ -21,20 +21,10 @@ export default function Login() {
   }, [isAuthenticated, user]);
 
   const redirectByRole = (role) => {
-    switch (role) {
-      case 'admin':
-        navigate('/admin/dashboard', { replace: true });
-        break;
-      case 'manager':
-        navigate('/manager/dashboard', { replace: true });
-        break;
-      case 'staff':
-        navigate('/staff/dashboard', { replace: true });
-        break;
-      case 'customer':
-      default:
-        navigate('/customer', { replace: true });
-        break;
+    if (role === 'admin') {
+      navigate('/admin/dashboard', { replace: true });
+    } else {
+      navigate('/customer', { replace: true });
     }
   };
 
@@ -166,22 +156,6 @@ export default function Login() {
             >
               <div className="font-bold text-[#dfb76c]">Admin</div>
               <div className="text-stone-500 truncate">admin@smartsalon.in</div>
-            </button>
-            <button
-              type="button"
-              onClick={() => handleQuickFill('manager@smartsalon.in', 'Manager@123')}
-              className="p-2 rounded-xl bg-[#1c1b26] border border-white/5 hover:border-[#c59a58]/40 text-stone-300 hover:text-white transition-all text-left"
-            >
-              <div className="font-bold text-[#dfb76c]">Manager</div>
-              <div className="text-stone-500 truncate">manager@smartsalon.in</div>
-            </button>
-            <button
-              type="button"
-              onClick={() => handleQuickFill('staff@smartsalon.in', 'Staff@123')}
-              className="p-2 rounded-xl bg-[#1c1b26] border border-white/5 hover:border-[#c59a58]/40 text-stone-300 hover:text-white transition-all text-left"
-            >
-              <div className="font-bold text-[#dfb76c]">Staff</div>
-              <div className="text-stone-500 truncate">staff@smartsalon.in</div>
             </button>
             <button
               type="button"

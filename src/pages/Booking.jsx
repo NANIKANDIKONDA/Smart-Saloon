@@ -11,7 +11,11 @@ import {
   User,
   CreditCard,
   FileText,
-  AlertCircle
+  AlertCircle,
+  Smartphone,
+  MessageSquare,
+  Copy,
+  Check
 } from 'lucide-react';
 import BookingProgress from '../components/ui/BookingProgress';
 import BranchCard from '../components/ui/BranchCard';
@@ -59,6 +63,7 @@ export default function Booking() {
     notes: ''
   });
   const [confirmedBooking, setConfirmedBooking] = useState(null);
+  const [copiedMessage, setCopiedMessage] = useState(false);
 
   // Auto-fill from logged in user if changed
   useEffect(() => {
@@ -597,6 +602,88 @@ export default function Booking() {
                 <span className="text-[#c59a58] font-bold">
                   ₹{Math.max(0, totalAmount - 99)} at salon
                 </span>
+              </div>
+            </div>
+
+            {/* Appendix A Mobile Notification Card */}
+            <div className="bg-[#1a1924] rounded-2xl p-6 text-left space-y-4 border border-[#c59a58]/30">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Smartphone className="w-4 h-4 text-[#c59a58]" />
+                  <span className="font-condensed font-bold uppercase tracking-wider text-white text-xs">
+                    Customer Mobile Notification
+                  </span>
+                </div>
+                <span className="text-[10px] font-mono px-2.5 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 font-semibold">
+                  Direct Mobile Dispatch
+                </span>
+              </div>
+
+              <p className="text-[11px] text-stone-400">
+                Your appointment confirmation formatted per Appendix A is ready to send to your mobile number ({customer.phone || 'mobile number'}).
+              </p>
+
+              {/* Formatted Appendix A Preview */}
+              <div className="p-3.5 rounded-xl bg-black/40 border border-white/5 font-mono text-[11px] text-stone-300 leading-relaxed whitespace-pre-line">
+                {confirmedBooking?.notification_message || (
+                  `Hi ${customer.name || 'Guest'}, your SmartSalon appointment is confirmed.\n` +
+                  `Booking ID: ${confirmedBooking?.bookingId || 'SS-2026-XXXXX'}\n` +
+                  `Service: ${selectedServicesList.map(s => s.name).join(', ') || 'Precision Haircut & Styling'}\n` +
+                  `Branch: ${selectedBranch?.name || 'Kakinada Main Branch'}\n` +
+                  `Date: ${selectedDate}\n` +
+                  `Time: ${selectedTime}\n` +
+                  `Price: ₹${totalAmount}\n` +
+                  `Duration: 45 mins\n` +
+                  `We look forward to seeing you!`
+                )}
+              </div>
+
+              {/* Action Buttons: WhatsApp & Native SMS & Copy */}
+              <div className="flex flex-wrap gap-2.5 pt-1">
+                <a
+                  href={
+                    confirmedBooking?.whatsapp_url ||
+                    `https://api.whatsapp.com/send?phone=91${customer.phone.replace(/\D/g, '').slice(-10)}&text=${encodeURIComponent(
+                      confirmedBooking?.notification_message ||
+                      `Hi ${customer.name}, your SmartSalon appointment is confirmed. Booking ID: ${confirmedBooking?.bookingId || 'SS-2026-XXXXX'} Service: ${selectedServicesList.map(s => s.name).join(', ')} Branch: ${selectedBranch?.name} Date: ${selectedDate} Time: ${selectedTime} We look forward to seeing you!`
+                    )}`
+                  }
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex-1 min-w-[180px] px-4 py-2.5 rounded-xl bg-[#25D366]/20 hover:bg-[#25D366]/30 text-[#25D366] border border-[#25D366]/30 font-condensed font-bold uppercase text-xs tracking-wider flex items-center justify-center gap-2 transition-all shadow-sm"
+                >
+                  <MessageSquare className="w-4 h-4" />
+                  <span>Send via WhatsApp</span>
+                </a>
+
+                <a
+                  href={
+                    confirmedBooking?.sms_url ||
+                    `sms:${customer.phone.replace(/\D/g, '').slice(-10)}?body=${encodeURIComponent(
+                      confirmedBooking?.notification_message ||
+                      `Hi ${customer.name}, your SmartSalon appointment is confirmed. Booking ID: ${confirmedBooking?.bookingId || 'SS-2026-XXXXX'}`
+                    )}`
+                  }
+                  className="flex-1 min-w-[160px] px-4 py-2.5 rounded-xl bg-[#c59a58]/20 hover:bg-[#c59a58]/30 text-[#dfb76c] border border-[#c59a58]/30 font-condensed font-bold uppercase text-xs tracking-wider flex items-center justify-center gap-2 transition-all"
+                >
+                  <Smartphone className="w-4 h-4" />
+                  <span>Open in Mobile SMS</span>
+                </a>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    const text = confirmedBooking?.notification_message ||
+                      `Hi ${customer.name}, your SmartSalon appointment is confirmed. Booking ID: ${confirmedBooking?.bookingId || 'SS-2026-XXXXX'} Service: ${selectedServicesList.map(s => s.name).join(', ')} Branch: ${selectedBranch?.name} Date: ${selectedDate} Time: ${selectedTime} We look forward to seeing you!`;
+                    navigator.clipboard?.writeText(text);
+                    setCopiedMessage(true);
+                    setTimeout(() => setCopiedMessage(false), 2500);
+                  }}
+                  className="px-3 py-2.5 rounded-xl bg-white/5 hover:bg-white/10 text-stone-300 text-xs font-condensed uppercase tracking-wider flex items-center gap-1.5 transition-colors border border-white/5"
+                >
+                  {copiedMessage ? <Check className="w-4 h-4 text-emerald-400" /> : <Copy className="w-4 h-4" />}
+                  <span>{copiedMessage ? 'Copied' : 'Copy'}</span>
+                </button>
               </div>
             </div>
 

@@ -31,14 +31,6 @@ class TestCrmAndPayments(unittest.TestCase):
         self.assertEqual(cust_login.status_code, 200)
         self.cust_token = cust_login.json()["access_token"]
         self.cust_headers = {"Authorization": f"Bearer {self.cust_token}"}
-        # Obtain manager token
-        mgr_login = client.post("/api/auth/login", json={
-            "email": "manager@smartsalon.in",
-            "password": "Manager@123"
-        })
-        self.assertEqual(mgr_login.status_code, 200)
-        self.mgr_token = mgr_login.json()["access_token"]
-        self.mgr_headers = {"Authorization": f"Bearer {self.mgr_token}"}
 
     def test_01_branches_endpoint(self):
         # Public active branches endpoint
@@ -51,12 +43,12 @@ class TestCrmAndPayments(unittest.TestCase):
         self.assertIn("kadapa-1", branch_ids)
         print("  [PASS] GET /api/branches/active: Returned active salon branches for public/booking")
 
-        # Manager full branches endpoint
-        mgr_resp = client.get("/api/branches", headers=self.mgr_headers)
-        self.assertEqual(mgr_resp.status_code, 200)
-        all_branches = mgr_resp.json()
+        # Admin full branches endpoint
+        admin_resp = client.get("/api/branches", headers=self.admin_headers)
+        self.assertEqual(admin_resp.status_code, 200)
+        all_branches = admin_resp.json()
         self.assertGreaterEqual(len(all_branches), 6)
-        print("  [PASS] GET /api/branches (Manager): Returned full branch management list")
+        print("  [PASS] GET /api/branches (Admin): Returned full branch management list")
 
     def test_02_rbac_guard(self):
         # Customer attempting to access CRM dashboard should get 403 Forbidden

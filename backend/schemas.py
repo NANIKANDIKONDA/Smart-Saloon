@@ -252,6 +252,11 @@ class BookingResponse(BaseModel):
     status: str
     paymentStatus: Optional[str] = "Pending"
     bookingType: Optional[str] = "walk_in"
+    notification_message: Optional[str] = None
+    whatsapp_url: Optional[str] = None
+    sms_url: Optional[str] = None
+    live_dispatched: Optional[bool] = False
+    sms_provider: Optional[str] = None
 
     class Config:
         from_attributes = True

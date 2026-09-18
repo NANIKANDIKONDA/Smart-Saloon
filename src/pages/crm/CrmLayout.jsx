@@ -21,7 +21,7 @@ import AuthModal from '../../components/AuthModal';
 export default function CrmLayout() {
   const { pathname } = useLocation();
   const navigate = useNavigate();
-  const { user, isAuthenticated, isStaffOrManager, logout } = useAuth();
+  const { user, isAuthenticated, isAdmin, logout } = useAuth();
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [authModalOpen, setAuthModalOpen] = useState(false);
 
@@ -36,7 +36,7 @@ export default function CrmLayout() {
     { name: 'Reports & KPIs', path: `${basePath}/reports`, icon: BarChart3 },
   ];
 
-  if (!isAuthenticated || !isStaffOrManager) {
+  if (!isAuthenticated || !isAdmin) {
     return (
       <div className="min-h-screen bg-[#0c0b10] flex items-center justify-center p-4">
         <div className="max-w-md w-full rounded-3xl bg-[#14131d] border border-white/10 p-8 text-center space-y-6 shadow-2xl">
@@ -45,10 +45,10 @@ export default function CrmLayout() {
           </div>
           <div>
             <h2 className="text-2xl font-condensed font-bold uppercase tracking-wider text-white">
-              SmartSalon CRM Portal
+              SmartSalon Admin Console
             </h2>
             <p className="text-xs text-stone-400 mt-2 leading-relaxed">
-              Restricted management console. Please log in with your Admin, Manager, or Staff credentials to continue.
+              Restricted management console. Please log in with your Admin credentials to continue.
             </p>
           </div>
 
@@ -58,7 +58,7 @@ export default function CrmLayout() {
               onClick={() => setAuthModalOpen(true)}
               className="w-full py-3.5 px-4 rounded-xl bg-[#c59a58] hover:bg-[#dfb76c] text-neutral-950 font-condensed font-bold uppercase text-xs tracking-wider shadow-gold transition-all"
             >
-              Sign In to Staff CRM
+              Sign In to Admin Console
             </button>
             <Link
               to="/"

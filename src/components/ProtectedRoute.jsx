@@ -1,4 +1,4 @@
-﻿import React from 'react';
+import React from 'react';
 import { Navigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { Scissors } from 'lucide-react';
@@ -28,17 +28,10 @@ export default function ProtectedRoute({ allowedRoles, children }) {
 
   if (allowedRoles && !allowedRoles.includes(user.role)) {
     // Role mismatch: redirect to their own dashboard
-    switch (user.role) {
-      case 'admin':
-        return <Navigate to="/admin/dashboard" replace />;
-      case 'manager':
-        return <Navigate to="/manager/dashboard" replace />;
-      case 'staff':
-        return <Navigate to="/staff/dashboard" replace />;
-      case 'customer':
-      default:
-        return <Navigate to="/customer" replace />;
+    if (user.role === 'admin') {
+      return <Navigate to="/admin/dashboard" replace />;
     }
+    return <Navigate to="/customer" replace />;
   }
 
   return children;
