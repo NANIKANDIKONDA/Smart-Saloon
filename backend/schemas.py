@@ -37,6 +37,7 @@ class BranchResponse(BaseModel):
     status: str
     opening_time: str
     closing_time: str
+    working_days: Optional[str] = "Monday - Saturday"
     image: Optional[str] = None
     created_at: Optional[Any] = None
     updated_at: Optional[Any] = None
@@ -53,9 +54,24 @@ class BranchCreateUpdateRequest(BaseModel):
     state: Optional[str] = "Andhra Pradesh"
     phone: str
     email: Optional[str] = None
-    status: Optional[str] = "active"
+    status: Optional[str] = "ACTIVE"
     opening_time: Optional[str] = "09:00 AM"
     closing_time: Optional[str] = "09:00 PM"
+    working_days: Optional[str] = "Monday - Saturday"
+    image: Optional[str] = None
+
+class BranchUpdateRequest(BaseModel):
+    name: Optional[str] = None
+    code: Optional[str] = None
+    address: Optional[str] = None
+    city: Optional[str] = None
+    state: Optional[str] = None
+    phone: Optional[str] = None
+    email: Optional[str] = None
+    status: Optional[str] = None
+    opening_time: Optional[str] = None
+    closing_time: Optional[str] = None
+    working_days: Optional[str] = None
     image: Optional[str] = None
 
 class StaffResponse(BaseModel):
@@ -277,7 +293,12 @@ class ChatRequest(BaseModel):
 class ChatResponse(BaseModel):
     answer: str
 
+class TestSmsRequest(BaseModel):
+    phone: str
+    message: Optional[str] = "Hi! This is a live test notification from SmartSalon."
+
 class HealthResponse(BaseModel):
     status: str
     database: str
     ollama: dict
+

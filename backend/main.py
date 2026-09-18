@@ -21,6 +21,7 @@ from .schemas import (
     ServiceCreateUpdateRequest,
     BranchResponse,
     BranchCreateUpdateRequest,
+    BranchUpdateRequest,
     StaffResponse,
     StaffCreateUpdateRequest,
     SlotAvailability,
@@ -40,7 +41,8 @@ from .schemas import (
     CustomerTagCreateRequest,
     ChatRequest,
     ChatResponse,
-    HealthResponse
+    HealthResponse,
+    TestSmsRequest
 )
 from .data import (
     SALON_INFO,
@@ -62,7 +64,14 @@ from .payments import (
     verify_razorpay_signature
 )
 from .ollama_service import generate_chat_response, check_ollama_health, resolve_verified_salon_query
-from .notifications import send_booking_confirmation_sms, send_booking_confirmation_whatsapp, generate_mobile_dispatch_urls
+from .notifications import (
+    send_booking_confirmation_sms,
+    send_booking_confirmation_whatsapp,
+    send_appointment_reminder_notification,
+    dispatch_live_cellular_sms,
+    generate_mobile_dispatch_urls,
+    mask_phone
+)
 from .intent_router import classify_intent, OFF_TOPIC_REFUSAL, GROUNDING_REFUSAL
 from .rag_service import handle_rag_pipeline
 from .crm_query_service import execute_authorized_crm_query
@@ -219,17 +228,34 @@ def get_me(current_user: User = Depends(get_current_user)):
 @app.get("/api/branches/active", response_model=List[BranchResponse], tags=["Branches"])
 def get_active_branches(db: Session = Depends(get_db)):
     """Public customer-facing endpoint returning only active salon branches."""
-    branches = db.query(Branch).filter(func.lower(Branch.status).in_(["active", "open"])).all()
+    branches = db.query(Branch).filter(func.upper(Branch.status) == "ACTIVE").all()
     return branches
 
 @app.get("/api/branches", response_model=List[BranchResponse], tags=["Branches"])
 def get_branches(
+    search: Optional[str] = None,
+    city: Optional[str] = None,
+    status: Optional[str] = None,
     db: Session = Depends(get_db),
     current_user: User = Depends(require_admin)
 ):
-    """Admin-only endpoint returning all branches (active & inactive)."""
-    branches = db.query(Branch).order_by(Branch.name.asc()).all()
-    return branches
+    """Admin-only endpoint returning all branches with optional search and filters."""
+    query = db.query(Branch)
+    if status and status.strip() and status.upper() != "ALL":
+        query = query.filter(func.upper(Branch.status) == status.strip().upper())
+    if city and city.strip() and city.upper() != "ALL":
+        query = query.filter(func.lower(Branch.city) == city.strip().lower())
+    if search and search.strip():
+        term = f"%{search.strip().lower()}%"
+        query = query.filter(
+            or_(
+                func.lower(Branch.name).like(term),
+                func.lower(Branch.code).like(term),
+                func.lower(Branch.address).like(term),
+                func.lower(Branch.city).like(term)
+            )
+        )
+    return query.order_by(Branch.name.asc()).all()
 
 @app.post("/api/branches", response_model=BranchResponse, status_code=status.HTTP_201_CREATED, tags=["Branches"])
 def create_branch(
@@ -246,6 +272,9 @@ def create_branch(
 
     branch_id = req.id.strip() if req.id and req.id.strip() else f"br-{uuid.uuid4().hex[:8]}"
     code = req.code.strip() if req.code and req.code.strip() else f"BR-{random.randint(100, 999)}"
+    normalized_status = (req.status or "ACTIVE").strip().upper()
+    if normalized_status not in ["ACTIVE", "INACTIVE"]:
+        normalized_status = "ACTIVE"
 
     new_branch = Branch(
         id=branch_id,
@@ -256,9 +285,10 @@ def create_branch(
         state=req.state.strip() if req.state else "Andhra Pradesh",
         phone=req.phone.strip(),
         email=req.email.strip() if req.email else None,
-        status="active",
+        status=normalized_status,
         opening_time=req.opening_time or "09:00 AM",
         closing_time=req.closing_time or "09:00 PM",
+        working_days=req.working_days or "Monday - Saturday",
         image=req.image,
         created_at=datetime.now(),
         updated_at=datetime.now()
@@ -269,13 +299,14 @@ def create_branch(
     return new_branch
 
 @app.put("/api/branches/{branch_id}", response_model=BranchResponse, tags=["Branches"])
+@app.patch("/api/branches/{branch_id}", response_model=BranchResponse, tags=["Branches"])
 def update_branch(
     branch_id: str,
-    req: BranchCreateUpdateRequest,
+    req: BranchUpdateRequest,
     db: Session = Depends(get_db),
     current_user: User = Depends(require_admin)
 ):
-    """Admin-only endpoint to update branch details."""
+    """Admin-only endpoint to update branch details and toggle active/inactive status."""
     branch = db.query(Branch).filter(Branch.id == branch_id).first()
     if not branch:
         raise HTTPException(status_code=404, detail=f"Branch '{branch_id}' not found")
@@ -295,11 +326,15 @@ def update_branch(
     if req.email is not None:
         branch.email = req.email.strip() if req.email.strip() else None
     if req.status and req.status.strip():
-        branch.status = req.status.strip().lower()
+        normalized_status = req.status.strip().upper()
+        if normalized_status in ["ACTIVE", "INACTIVE"]:
+            branch.status = normalized_status
     if req.opening_time:
         branch.opening_time = req.opening_time
     if req.closing_time:
         branch.closing_time = req.closing_time
+    if req.working_days:
+        branch.working_days = req.working_days
     if req.image is not None:
         branch.image = req.image
 
@@ -315,33 +350,36 @@ def delete_branch(
     current_user: User = Depends(require_admin)
 ):
     """
-    Admin-only endpoint to remove a branch.
-    Performs soft delete (status='inactive') if the branch has dependent bookings or staff,
-    to preserve historical data.
+    Admin-only safe delete:
+    Blocks permanent deletion if the branch has existing bookings; deactivates instead.
+    Permanently deletes only if 0 bookings exist.
     """
     branch = db.query(Branch).filter(Branch.id == branch_id).first()
     if not branch:
         raise HTTPException(status_code=404, detail=f"Branch '{branch_id}' not found")
 
-    # Check dependencies
-    has_bookings = db.query(Booking).filter(Booking.branch_id == branch_id).count() > 0
-    has_staff = db.query(Staff).filter(Staff.branch_id == branch_id).count() > 0
+    booking_count = db.query(Booking).filter(Booking.branch_id == branch_id).count()
+    staff_count = db.query(Staff).filter(Staff.branch_id == branch_id).count()
 
-    if has_bookings or has_staff:
-        branch.status = "inactive"
+    if booking_count > 0 or staff_count > 0:
+        branch.status = "INACTIVE"
         branch.updated_at = datetime.now()
         db.commit()
         return {
-            "message": "Branch deactivated successfully (preserved historical records).",
-            "status": "inactive",
-            "soft_deleted": True
+            "message": f"Branch has {booking_count} historical booking(s) and cannot be deleted. It has been deactivated instead.",
+            "status": "INACTIVE",
+            "soft_deleted": True,
+            "bookings_count": booking_count,
+            "id": branch_id
         }
     else:
         db.delete(branch)
         db.commit()
         return {
-            "message": "Branch removed successfully.",
-            "soft_deleted": False
+            "message": "Branch permanently removed.",
+            "status": "DELETED",
+            "soft_deleted": False,
+            "id": branch_id
         }
 
 @app.get("/api/branches/{branch_id}", response_model=BranchResponse, tags=["Branches"])
@@ -747,6 +785,49 @@ def cancel_booking(
     booking.status = "Cancelled"
     db.commit()
     return {"message": "Booking successfully cancelled", "bookingId": booking_id, "status": "Cancelled"}
+
+@app.post("/api/bookings/{booking_id}/send-alert", tags=["Bookings", "Notifications"])
+def send_booking_alert_reminder(
+    booking_id: str,
+    db: Session = Depends(get_db),
+    current_user: Optional[User] = Depends(get_optional_user)
+):
+    """Sends an appointment reminder / alert SMS and WhatsApp link for a booking."""
+    booking = db.query(Booking).filter(Booking.id == booking_id).first()
+    if not booking:
+        raise HTTPException(status_code=404, detail="Booking not found")
+
+    branch = db.query(Branch).filter(Branch.id == booking.branch_id).first() if booking.branch_id else None
+    branch_name = branch.name if branch else "SmartSalon Branch"
+
+    res = send_appointment_reminder_notification(
+        phone=booking.customer_phone,
+        customer_name=booking.customer_name,
+        booking_id=booking.id,
+        service_name=booking.service_name,
+        branch_name=branch_name,
+        date=booking.date,
+        time_slot=booking.time_slot
+    )
+    return res
+
+@app.post("/api/notifications/test-sms", tags=["Notifications"])
+def test_sms_dispatch(
+    req: TestSmsRequest,
+    current_user: Optional[User] = Depends(get_optional_user)
+):
+    """Admin/Dev endpoint to test cellular SMS dispatch via Twilio/Fast2SMS."""
+    res = dispatch_live_cellular_sms(req.phone, req.message)
+    links = generate_mobile_dispatch_urls(req.phone, req.message)
+    return {
+        "status": "sent" if res.get("success") else "failed_or_simulated",
+        "phone": mask_phone(req.phone),
+        "provider": res.get("provider", "none"),
+        "live_dispatched": res.get("success", False),
+        "details": res,
+        "whatsapp_url": links["whatsapp_url"],
+        "sms_url": links["sms_url"]
+    }
 
 # ==================== PAYMENTS (RAZORPAY) ====================
 

@@ -26,9 +26,10 @@ class Branch(Base):
     state = Column(String(100), nullable=False, default="Andhra Pradesh")
     phone = Column(String(50), nullable=False)
     email = Column(String(100), nullable=True)
-    status = Column(String(50), default="active", nullable=False) # active, inactive
+    status = Column(String(50), default="ACTIVE", nullable=False) # ACTIVE, INACTIVE
     opening_time = Column(String(20), default="09:00 AM", nullable=False)
     closing_time = Column(String(20), default="09:00 PM", nullable=False)
+    working_days = Column(String(100), default="Monday - Saturday", nullable=True)
     image = Column(String(500), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=True)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=True)

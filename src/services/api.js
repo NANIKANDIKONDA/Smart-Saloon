@@ -66,8 +66,13 @@ export async function getActiveBranches() {
   return Array.isArray(data) ? data : [];
 }
 
-export async function getBranches() {
-  const data = await apiRequest('/branches', { method: 'GET' });
+export async function getBranches(filters = {}) {
+  const params = new URLSearchParams();
+  if (filters.search && filters.search.trim()) params.append('search', filters.search.trim());
+  if (filters.city && filters.city !== 'All') params.append('city', filters.city);
+  if (filters.status && filters.status !== 'All') params.append('status', filters.status);
+  const query = params.toString() ? `?${params.toString()}` : '';
+  const data = await apiRequest(`/branches${query}`, { method: 'GET' });
   return Array.isArray(data) ? data : [];
 }
 

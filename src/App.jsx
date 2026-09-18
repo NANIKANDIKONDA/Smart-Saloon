@@ -133,6 +133,8 @@ function MainApp() {
             <Route path="appointments" element={<CrmAppointments />} />
             <Route path="customers" element={<CrmCustomers />} />
             <Route path="staff" element={<CrmStaff />} />
+            <Route path="branches" element={<CrmServicesBranches defaultTab="branches" />} />
+            <Route path="services" element={<CrmServicesBranches defaultTab="services" />} />
             <Route path="services-branches" element={<CrmServicesBranches />} />
             <Route path="payments" element={<CrmPayments />} />
             <Route path="reports" element={<CrmReports />} />

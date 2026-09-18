@@ -57,6 +57,7 @@ def migrate_existing_tables():
         needed_branch_cols = [
             ("state", "VARCHAR(100) DEFAULT 'Andhra Pradesh'"),
             ("email", "VARCHAR(100)"),
+            ("working_days", "VARCHAR(100) DEFAULT 'Monday - Saturday'"),
             ("created_at", "DATETIME"),
             ("updated_at", "DATETIME")
         ]
@@ -68,9 +69,11 @@ def migrate_existing_tables():
                 except Exception as e:
                     print(f"Migration notice: {e}")
 
-        # Normalize branch statuses to 'active' where 'Open'
+        # Normalize branch statuses to 'ACTIVE' / 'INACTIVE' and set working_days
         try:
-            conn.execute(text("UPDATE branches SET status = 'active' WHERE status = 'Open' OR status IS NULL;"))
+            conn.execute(text("UPDATE branches SET status = 'ACTIVE' WHERE LOWER(status) IN ('active', 'open') OR status IS NULL;"))
+            conn.execute(text("UPDATE branches SET status = 'INACTIVE' WHERE LOWER(status) IN ('inactive', 'closed');"))
+            conn.execute(text("UPDATE branches SET working_days = 'Monday - Saturday' WHERE working_days IS NULL OR working_days = '';"))
             conn.commit()
         except Exception as e:
             print(f"Migration notice: {e}")
@@ -93,9 +96,10 @@ def seed_all_data():
                     address=b_data["address"],
                     city=b_data["city"],
                     phone=b_data["phone"],
-                    status=b_data["status"],
+                    status=b_data.get("status", "ACTIVE").upper(),
                     opening_time=b_data["opening_time"],
                     closing_time=b_data["closing_time"],
+                    working_days=b_data.get("working_days", "Monday - Saturday"),
                     image=b_data.get("image")
                 )
                 session.add(branch)

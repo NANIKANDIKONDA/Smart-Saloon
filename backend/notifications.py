@@ -10,6 +10,15 @@ import logging
 import httpx
 from datetime import datetime
 from typing import Optional, Dict, Any
+from pathlib import Path
+from dotenv import load_dotenv
+
+# Ensure root .env is loaded
+root_env = Path(__file__).resolve().parent.parent / ".env"
+if root_env.exists():
+    load_dotenv(root_env)
+else:
+    load_dotenv()
 
 logger = logging.getLogger("smartsalon.notifications")
 
@@ -21,6 +30,30 @@ def get_env_credentials():
         "TWILIO_PHONE_NUMBER": os.getenv("TWILIO_PHONE_NUMBER"),
         "GUPSHUP_API_KEY": os.getenv("GUPSHUP_API_KEY")
     }
+
+_CACHED_TWILIO_NUMBER = None
+
+def get_or_discover_twilio_number(account_sid: str, auth_token: str, configured_number: Optional[str] = None) -> Optional[str]:
+    """Retrieves configured Twilio number or auto-discovers provisioned number from Twilio API."""
+    global _CACHED_TWILIO_NUMBER
+    if configured_number and configured_number.strip():
+        return configured_number.strip()
+    if _CACHED_TWILIO_NUMBER:
+        return _CACHED_TWILIO_NUMBER
+
+    try:
+        url = f"https://api.twilio.com/2010-04-01/Accounts/{account_sid}/IncomingPhoneNumbers.json"
+        with httpx.Client(timeout=5) as client:
+            r = client.get(url, auth=(account_sid, auth_token))
+            if r.status_code == 200:
+                nums = r.json().get("incoming_phone_numbers", [])
+                if nums and len(nums) > 0:
+                    _CACHED_TWILIO_NUMBER = nums[0].get("phone_number")
+                    logger.info("Auto-discovered active Twilio phone number: %s", _CACHED_TWILIO_NUMBER)
+                    return _CACHED_TWILIO_NUMBER
+    except Exception as e:
+        logger.warning("Could not auto-fetch Twilio phone number: %s", e)
+    return None
 
 def dispatch_live_cellular_sms(phone: str, message: str) -> Dict[str, Any]:
     """
@@ -58,30 +91,80 @@ def dispatch_live_cellular_sms(phone: str, message: str) -> Dict[str, Any]:
         except Exception as e:
             logger.error("Fast2SMS dispatch failed: %s", e)
 
-    # 2. Twilio Provider (Global SMS)
-    if creds["TWILIO_ACCOUNT_SID"] and creds["TWILIO_AUTH_TOKEN"] and creds["TWILIO_PHONE_NUMBER"]:
+    # 2. Twilio Provider (Global Cellular SMS)
+    if creds["TWILIO_ACCOUNT_SID"] and creds["TWILIO_AUTH_TOKEN"]:
+        sid = creds["TWILIO_ACCOUNT_SID"].strip()
+        token = creds["TWILIO_AUTH_TOKEN"].strip()
+        from_number = get_or_discover_twilio_number(sid, token, creds.get("TWILIO_PHONE_NUMBER"))
+
+        if not from_number:
+            logger.warning(
+                "[TWILIO NOTICE] Account SID and Token are verified, but no Twilio sending phone number is active. "
+                "Log in to https://console.twilio.com and click 'Get phone number', then save it to TWILIO_PHONE_NUMBER in .env."
+            )
+            return {
+                "success": False,
+                "provider": "Twilio",
+                "phone": mask_phone(phone),
+                "error": "No Twilio phone number active. Claim one at console.twilio.com ('Get phone number')."
+            }
+
         try:
-            clean = phone.strip().replace(" ", "").replace("-", "")
+            clean = "".join(c for c in str(phone) if c.isdigit() or c == "+")
+            if clean.startswith("0"):
+                clean = clean.lstrip("0")
             if not clean.startswith("+"):
-                clean = f"+91{clean}"
-            url = f"https://api.twilio.com/2010-04-01/Accounts/{creds['TWILIO_ACCOUNT_SID']}/Messages.json"
+                if len(clean) == 10:
+                    clean = f"+91{clean}"
+                else:
+                    clean = f"+{clean}"
+
+            url = f"https://api.twilio.com/2010-04-01/Accounts/{sid}/Messages.json"
             with httpx.Client(timeout=10) as client:
                 r = client.post(
                     url,
                     data={
-                        "From": creds["TWILIO_PHONE_NUMBER"],
+                        "From": from_number,
                         "To": clean,
                         "Body": message
                     },
-                    auth=(creds["TWILIO_ACCOUNT_SID"], creds["TWILIO_AUTH_TOKEN"])
+                    auth=(sid, token)
                 )
                 if r.status_code in [200, 201]:
-                    print(f"[LIVE SMS] Successfully dispatched SMS to {mask_phone(phone)} via Twilio", flush=True)
-                    return {"success": True, "provider": "Twilio", "phone": mask_phone(phone)}
+                    data = r.json()
+                    msg_sid = data.get("sid", "")
+                    print(f"[LIVE SMS] Successfully dispatched SMS to {mask_phone(phone)} via Twilio (SID: {msg_sid})", flush=True)
+                    return {
+                        "success": True,
+                        "provider": "Twilio",
+                        "phone": mask_phone(phone),
+                        "sid": msg_sid,
+                        "status": data.get("status")
+                    }
                 else:
-                    logger.warning("Twilio SMS dispatch response: %s", r.text)
+                    err_json = {}
+                    try:
+                        err_json = r.json()
+                    except Exception:
+                        pass
+                    err_msg = err_json.get("message", r.text)
+                    err_code = err_json.get("code")
+                    logger.warning("[TWILIO SMS ERROR] Status %s (Code %s): %s", r.status_code, err_code, err_msg)
+                    return {
+                        "success": False,
+                        "provider": "Twilio",
+                        "phone": mask_phone(phone),
+                        "error": err_msg,
+                        "code": err_code
+                    }
         except Exception as e:
-            logger.error("Twilio SMS dispatch failed: %s", e)
+            logger.error("Twilio SMS dispatch exception: %s", e)
+            return {
+                "success": False,
+                "provider": "Twilio",
+                "phone": mask_phone(phone),
+                "error": str(e)
+            }
 
     return {"success": False, "provider": "none", "note": "No active SMS provider configured in .env"}
 
@@ -305,5 +388,18 @@ def send_appointment_reminder_notification(
         booking_id=booking_id,
         message=message
     )
-    return {"success": True, "provider": "dev_console", "phone": mask_phone(phone), "message": message}
+    links = generate_mobile_dispatch_urls(phone, message)
+    live_result = dispatch_live_cellular_sms(phone, message)
+
+    return {
+        "success": True,
+        "provider": live_result.get("provider", "dev_console"),
+        "phone": mask_phone(phone),
+        "raw_phone": phone,
+        "live_dispatched": live_result.get("success", False),
+        "message": message,
+        "whatsapp_url": links["whatsapp_url"],
+        "sms_url": links["sms_url"],
+        "details": live_result
+    }
 

@@ -13,7 +13,8 @@ import {
   ShieldCheck,
   Menu,
   X,
-  Bell
+  Bell,
+  Building2
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import AuthModal from '../../components/AuthModal';
@@ -31,7 +32,8 @@ export default function CrmLayout() {
     { name: 'Appointments', path: `${basePath}/appointments`, icon: Calendar },
     { name: 'Customers 360', path: `${basePath}/customers`, icon: Users },
     { name: 'Staff Roster', path: `${basePath}/staff`, icon: UserCheck },
-    { name: 'Services & Branches', path: `${basePath}/services-branches`, icon: Scissors },
+    { name: 'Branch Management', path: `${basePath}/branches`, icon: Building2 },
+    { name: 'Services Menu', path: `${basePath}/services-branches`, icon: Scissors },
     { name: 'Transactions', path: `${basePath}/payments`, icon: CreditCard },
     { name: 'Reports & KPIs', path: `${basePath}/reports`, icon: BarChart3 },
   ];
