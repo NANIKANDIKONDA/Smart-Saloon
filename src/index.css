@@ -1,0 +1,55 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  body {
+    background-color: #0c0b10;
+    color: #f4f0eb;
+    font-family: 'Inter', system-ui, -apple-system, sans-serif;
+    overflow-x: hidden;
+  }
+
+  h1, h2, h3, h4, .font-heading {
+    font-family: 'Oswald', 'Inter', sans-serif;
+    letter-spacing: 0.03em;
+  }
+}
+
+/* Custom luxury scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: #09080c;
+}
+::-webkit-scrollbar-thumb {
+  background: #282637;
+  border-radius: 9999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #c59a58;
+}
+
+/* Luxury gold gradients and glass cards */
+.gold-glow {
+  box-shadow: 0 0 25px rgba(197, 154, 88, 0.25);
+}
+
+.gold-gradient-bg {
+  background: linear-gradient(135deg, #dfb76c 0%, #c59a58 50%, #9e7535 100%);
+}
+
+.gold-gradient-text {
+  background: linear-gradient(135deg, #fcebc7 0%, #dfb76c 50%, #c59a58 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+.glass-panel {
+  background: rgba(20, 19, 27, 0.85);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(197, 154, 88, 0.15);
+}
